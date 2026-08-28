@@ -18,7 +18,10 @@
     "typeorm": "typeorm-ts-node-commonjs",
     "migration:generate": "typeorm migration:generate -d src/database/data-source.ts",
     "migration:run": "typeorm migration:run -d src/database/data-source.ts",
-    "seed": "ts-node src/database/seeds/run-seed.ts"
+    "seed": "ts-node src/database/seeds/run-seed.ts",
+    "bootstrap:admin": "ts-node src/database/seeds/bootstrap-admin.ts",
+    "worker": "node dist/workers.js",
+    "worker:dev": "ts-node src/workers/main.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.3.10",
@@ -48,7 +51,11 @@
     "rxjs": "^7.8.1",
     "socket.io": "^4.7.5",
     "typeorm": "^0.3.20",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "@aws-sdk/client-s3": "^3.620.0",
+    "@aws-sdk/s3-request-presigner": "^3.620.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "graphile-worker": "^0.16.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.2",

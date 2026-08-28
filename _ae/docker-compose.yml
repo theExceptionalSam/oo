@@ -1,5 +1,20 @@
 version: '3.9'
 
+# =============================================================================
+# Local development docker-compose.
+#
+# In production we use managed services instead:
+#   - Postgres   → Supabase Pro (RLS, PITR, Realtime, Storage)
+#   - Storage    → Cloudflare R2 (zero egress, S3-compatible)
+#   - Search     → Postgres tsvector (no Elasticsearch needed)
+#   - Queue      → Graphile Worker on the SAME Postgres (no Redis needed)
+#   - Hosting    → Render (API + Worker) + Vercel (frontend)
+#
+# This compose file is for LOCAL dev only. The only stateful services here
+# are Postgres (mandatory) and Redis (optional — only needed for the
+# ScopeService cache). MinIO and Elasticsearch are GONE.
+# =============================================================================
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -18,6 +33,9 @@ services:
       timeout: 5s
       retries: 10
 
+  # Redis is OPTIONAL for local dev — only used for ScopeService caching.
+  # The queue is now Graphile Worker on Postgres, not BullMQ on Redis.
+  # Comment this out if you don't need scope caching locally.
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -27,31 +45,6 @@ services:
     volumes:
       - redisdata:/data
 
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - miniodata:/data
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
-    restart: unless-stopped
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-    ports:
-      - '9200:9200'
-    volumes:
-      - esdata:/usr/share/elasticsearch/data
-
   api:
     build:
       context: .
@@ -60,10 +53,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
       DB_HOST: postgres
       DB_PORT: 5432
@@ -72,17 +63,39 @@ services:
       DB_DATABASE: schoolsync
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: schoolsync
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_FORCE_PATH_STYLE: 'true'
-      ELASTICSEARCH_NODE: http://elasticsearch:9200
+      # Use local dev JWT keys (generate via ./deploy/gen-dev-keys.sh)
+      JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3001
     ports:
       - '3000:3000'
+    volumes:
+      - ./keys:/app/keys:ro
+
+  # Worker process — same image, different start command.
+  # In Render: deploy as a separate Background Worker with start = `node dist/workers.js`.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: schoolsync
+      DB_PASSWORD: schoolsync
+      DB_DATABASE: schoolsync
+      WORKER_CONCURRENCY: '3'
+      JWT_PRIVATE_KEY_PATH: /app/keys/private.pem
+      JWT_PUBLIC_KEY_PATH: /app/keys/public.pem
+    command: ['node', 'dist/workers.js']
+    volumes:
+      - ./keys:/app/keys:ro
 
 volumes:
   pgdata:
   redisdata:
-  miniodata:
-  esdata:
