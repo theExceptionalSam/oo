@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: _ae
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: schoolsync
+          POSTGRES_PASSWORD: schoolsync
+          POSTGRES_DB: schoolsync
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U schoolsync"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: '_ae/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate dev JWT keys
+        run: |
+          mkdir -p keys
+          openssl genrsa -out keys/private.pem 2048
+          openssl rsa -in keys/private.pem -pubout -out keys/public.pem
+
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true  # don't fail CI on existing lint debt
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Run unit tests
+        run: npm test -- --coverage
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: schoolsync
+          DB_PASSWORD: schoolsync
+          DB_DATABASE: schoolsync
+          REDIS_HOST: localhost
+          REDIS_PORT: '6379'
+          JWT_PRIVATE_KEY_PATH: ./keys/private.pem
+          JWT_PUBLIC_KEY_PATH: ./keys/public.pem
+
+      - name: Run migrations against fresh DB
+        run: npm run migration:run
+        env:
+          NODE_ENV: development
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: schoolsync
+          DB_PASSWORD: schoolsync
+          DB_DATABASE: schoolsync
+
+      - name: Audit — dependencies
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+      - name: Tenant isolation test
+        run: node tenant-test.mjs
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: schoolsync
+          DB_PASSWORD: schoolsync
+          DB_DATABASE: schoolsync
+          JWT_PRIVATE_KEY_PATH: ./keys/private.pem
+          JWT_PUBLIC_KEY_PATH: ./keys/public.pem
+
+      - name: Smoke test
+        run: node smoke-test.mjs
+        env:
+          NODE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: '5432'
+          DB_USERNAME: schoolsync
+          DB_PASSWORD: schoolsync
+          DB_DATABASE: schoolsync
+          JWT_PRIVATE_KEY_PATH: ./keys/private.pem
+          JWT_PUBLIC_KEY_PATH: ./keys/public.pem
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: _oe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: '_oe/package-lock.json'
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_API_URL: https://api.example.com
+          VITE_SOCKET_URL: wss://api.example.com
