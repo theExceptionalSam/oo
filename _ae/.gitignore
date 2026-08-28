@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.env
+.env.local
+keys/*.pem
+*.log
+.DS_Store
+.idea
+.vscode
